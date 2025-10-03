@@ -15,7 +15,7 @@ const db = await mysql.createConnection({
 const app = express();
 const PORT = 3000;
 
-async function tactics_list_id(url) {
+async function get_id_mapping(url) {
   const { data } = await axios.get(url);
   const $ = cheerio.load(data);
   const results = [];
@@ -49,7 +49,7 @@ async function tactics() {
 
 async function techniques() {
   const url_get_data = "https://attack.mitre.org/tactics/enterprise/";
-  const get_data = await tactics_list_id(url_get_data); // array of ids
+  const get_data = await get_id_mapping(url_get_data); // buat ngambil semua tactics
   const results = [];
 
   for (const id_mapping of get_data) {
@@ -64,7 +64,6 @@ async function techniques() {
 
         const $td_id_technique = $row.find('td').eq(0);
         const id_technique = $td_id_technique.find('a').first().text().trim();
-        const id_technique_href = $td_id_technique.find('a').first().attr('href') || null;
 
         const title = $row.find('td').eq(1).find('a').first().text().trim();
         const description = $row.find('td').last().text().replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim();
@@ -80,7 +79,6 @@ async function techniques() {
 
           sub_techniques.push({
             id_sub_technique,
-            // id_sub_technique_href,
             title,
             description
           });
@@ -128,8 +126,7 @@ app.get("/tactics", async (req, res) => {
 async function save_ttp_mapping() {
   const data = await tactics()
   for (const item of data) {
-    console.log('=========================')
-    console.log('Mencoba query MAPPING:')
+    console.log('Proses Insert/Update Tactics:')
     const [check_data] = await db.execute(
       `SELECT * FROM ttp_mapping WHERE id_mapping = ?`, [item.id_mapping]
     );
@@ -141,37 +138,15 @@ async function save_ttp_mapping() {
       console.log('Update.....')
       db.execute(`UPDATE ttp_mapping SET title = ?, description = ? WHERE id_mapping = ?`, [item.title, item.description, item.id_mapping])
     }
-    console.log('Berhasil!!!')
   }
-  return data;
 }
 
 async function save_ttp_mapping_technique_subtechnique() {
+  // === 1. Insert / Update Mapping ===
+  save_ttp_mapping()
   const data = await techniques();
-
   for (const item of data) {
-    console.log("Proses Mapping:", item.id_mapping);
-
-    // === 1. Insert / Update Mapping ===
-    const [check_mapping] = await db.execute(
-      "SELECT * FROM ttp_mapping WHERE id_mapping = ?",
-      [item.id_mapping]
-    );
-
-    if (check_mapping.length === 0) {
-      await db.execute(
-        "INSERT INTO ttp_mapping (id_mapping, title, description) VALUES (?, ?, ?)",
-        [item.id_mapping, item.title, item.description]
-      );
-      console.log("Insert Mapping:", item.id_mapping);
-    } else {
-      await db.execute(
-        "UPDATE ttp_mapping SET title = ?, description = ? WHERE id_mapping = ?",
-        [item.title, item.description, item.id_mapping]
-      );
-      console.log("Update Mapping:", item.id_mapping);
-    }
-
+    console.log("Proses Insert/Update Techniques dan Sub-Techniques:", item.id_mapping);
     // === 2. Insert / Update Techniques ===
     const tech = item.techniques;
     const [check_tech] = await db.execute(
@@ -192,7 +167,6 @@ async function save_ttp_mapping_technique_subtechnique() {
       );
       console.log("Update Technique:", tech.id_technique);
     }
-
     // === 3. Insert / Update Sub-Techniques ===
     for (const sub of tech.sub_techniques) {
       const [check_sub] = await db.execute(
@@ -215,20 +189,11 @@ async function save_ttp_mapping_technique_subtechnique() {
       }
     }
   }
-
   console.log("=== Semua Data Berhasil Diproses ===");
 }
 
-
-
-async function get_data_mapping() {
-  const data = await tactics();
-  return data
-}
-
-
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
-  save_ttp_mapping()
-  // save_ttp_mapping_technique_subtechnique()
+  console.log('=============================')
+  save_ttp_mapping_technique_subtechnique()
 });
