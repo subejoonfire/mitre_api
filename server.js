@@ -4,6 +4,7 @@ import axios from "axios";
 import * as cheerio from "cheerio";
 
 const db = await mysql.createConnection({
+  // host: "192.168.92.2",
   host: "localhost",
   port: "3306",
   user: "root",
