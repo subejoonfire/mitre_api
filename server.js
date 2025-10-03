@@ -49,7 +49,7 @@ async function tactics() {
 
 async function techniques() {
   const url_get_data = "https://attack.mitre.org/tactics/enterprise/";
-  const get_data = await get_id_mapping(url_get_data); // buat ngambil semua tactics
+  const get_data = await get_id_mapping(url_get_data);
   const results = [];
 
   for (const id_mapping of get_data) {
@@ -123,6 +123,40 @@ app.get("/tactics", async (req, res) => {
   }
 })
 
+app.get("/update_api", (req, res) => {
+  save_ttp_mapping_technique_subtechnique()
+    .then(() => {
+      res.status(200).json({
+        'status': 'OK'
+      })
+    })
+    .catch((err) => {
+      res.status(500).json({
+        'error': err
+      })
+    })
+})
+
+app.get("/update_ttp/:ttp_id/:mapping_id/:techniques_id/:msa_number", async (req, res) => {
+  const { ttp_id, mapping_id, techniques_id, msa_number } = req.params
+  const data_mapping = db.execute(`
+    SELECT * FROM ttp_ttpmapping 
+    INNER JOIN ttp_mapping ON
+    ttp_mapping.id_mapping = ttp_ttpmapping.mapping_id
+    RIGHT JOIN ttp_ttpmappingtechniques ON
+    ttp_ttpmappingtechniques.mapping_id = ttp_mapping.id_mapping
+    INNER JOIN ttp_techniques ON
+    ttp_techniques.id_techniques = ttp_ttpmappingtechniques.techniques_id
+    INNER JOIN ttp_subtechniques ON
+    ttp_subtechniques.techniques.id = ttp_techniques.id_techniques
+    WHERE
+    ttp_ttpmapping.ttp_id = ? 
+    AND
+    ttp_ttpmapping.mapping_id = ?
+    `, [ttp_id, mapping_id])
+  // terjeda, harus nungguin mario
+})
+
 async function save_ttp_mapping() {
   const data = await tactics()
   for (const item of data) {
@@ -194,6 +228,6 @@ async function save_ttp_mapping_technique_subtechnique() {
 
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
-  console.log('=============================')
-  save_ttp_mapping_technique_subtechnique()
+  // console.log('=============================')
+  // save_ttp_mapping_technique_subtechnique()
 });
