@@ -10,10 +10,14 @@ const db = await mysql.createConnection({
   user: "root",
   // password: "M4gs3r@s",
   password: "Harlan123@",
-  database: "msa_v2"
+  database: "msa_v2",
+  charset: "utf8mb4", // pastikan pakai utf8mb4
+  rowsAsArray: false, // defaultnya false, biar return object
+  namedPlaceholders: true
 })
 
 const app = express();
+app.use(express.json());
 const PORT = 3000;
 
 async function get_id_tactic(url) {
@@ -137,6 +141,183 @@ app.get("/update_api", (req, res) => {
       })
     })
 })
+async function get_ttp(list_rule_name, msa_number) {
+  const placeholders = list_rule_name.map(() => '?').join(', ');
+
+  // Destructure dua hasil dari db.execute: rows dan fields
+  const [rows] = await db.execute(
+    `SELECT
+      ttp_ttp.id AS id,
+      ttp_ttp.id_ttp AS id_ttp,
+      ttp_ttp.name AS ttp_name,
+      ttp_ttp.override_id AS override_id,
+      ttp_ttp.has_ibm_default AS has_ibm_default,
+      ttp_ttp.last_updated AS last_updated,
+      ttp_ttp.msa_number AS msa_number,
+      ttp_ttp.min_mitre_version AS min_mitre_version,
+      ttp_ttptactics.tactics_id AS tactics_id,
+      ttp_ttptactics.name AS tactics_name,
+      ttp_ttptactics.confidence AS tactics_confidence,
+      ttp_ttptactics.user_override AS tactics_user_override,
+      ttp_ttptactics.enabled AS tactics_enabled,
+      ttp_ttptactics.ibm_default AS tactics_ibm_default,
+      ttp_ttptacticstechniques.techniques_id AS technique_id,
+      ttp_ttptacticstechniques.name AS technique_name,
+      ttp_ttptacticstechniques.confidence AS technique_confidence,
+      ttp_ttptacticstechniques.enabled AS technique_enabled,
+      ttp_ttptacticstechniques.parent_technique_name AS parent_technique_name,
+      ttp_tactics.id_tactics AS tactics_id_tactics,
+      ttp_tactics.title AS tactics_title,
+      ttp_tactics.description AS tactics_description,
+      ttp_techniques.id_techniques AS technique_id_techniques,
+      ttp_techniques.title AS technique_title,
+      ttp_techniques.description AS technique_description,
+      ttp_subtechniques.techniques_id AS subtechnique_techniques_id,
+      ttp_subtechniques.id_sub_technique AS subtechnique_id_sub_technique,
+      ttp_subtechniques.title AS subtechnique_title,
+      ttp_subtechniques.description AS subtechnique_description
+    FROM ttp_ttp
+    INNER JOIN ttp_ttptactics
+      ON ttp_ttptactics.ttp_id = ttp_ttp.id
+    INNER JOIN ttp_ttptacticstechniques
+      ON ttp_ttptacticstechniques.tactic_id = ttp_ttptactics.ttp_id
+    LEFT JOIN ttp_tactics
+      ON ttp_tactics.id_tactics = ttp_ttptactics.tactics_id
+    LEFT JOIN ttp_techniques  
+      ON ttp_techniques.tactics_id = ttp_tactics.id_tactics
+    LEFT JOIN ttp_subtechniques
+      ON ttp_subtechniques.techniques_id = ttp_techniques.id_techniques
+    WHERE ttp_ttp.name IN (${placeholders})
+    AND ttp_ttp.msa_number = ?`,
+    [...list_rule_name, msa_number]
+  );
+
+  return rows; // ✅ return hanya data barisnya
+}
+function mapTTPData(rows) {
+  const result = {};
+  const rulesArr = [];
+  const tacticsArr = [];
+  const tacticIdArr = [];
+  const techniquesArr = [];
+  const techniqueIdArr = [];
+
+  for (const row of rows) {
+    const ruleName = row.ttp_name || row.name;
+    if (!ruleName) continue;
+
+    // --- RULE ---
+    if (!result[ruleName]) {
+      if (!rulesArr.includes(ruleName)) rulesArr.push(ruleName);
+      result[ruleName] = {
+        id: row.id_ttp || row.id,
+        override_id: row.override_id,
+        has_ibm_default: row.has_ibm_default,
+        last_updated: row.last_updated,
+        mapping: {},
+        min_mitre_version: row.min_mitre_version
+      };
+    }
+
+    const mapping = result[ruleName].mapping;
+
+    // --- TACTIC ---
+    const tacticsTitle = row.tactics_title;
+    const tacticsName = row.tactics_name;
+    const tacticsIdTactics = row.tactics_id_tactics;
+    const tacticsId = row.tactics_id;
+    const tacticKey = tacticsTitle || tacticsName || tacticsId || 'UNKNOWN_TACTIC';
+
+    if (!tacticsArr.includes(tacticsTitle)) tacticsArr.push(tacticsTitle);
+    if (!mapping[tacticKey]) {
+      if (!tacticIdArr.includes(tacticsIdTactics)) tacticIdArr.push(tacticsIdTactics);
+      mapping[tacticKey] = {
+        confidence: row.tactics_confidence,
+        user_override: row.tactics_user_override,
+        enabled: row.tactics_enabled,
+        ibm_default: row.tactics_ibm_default,
+        id: tacticsId,
+        title: tacticsTitle,
+        description: row.tactics_description,
+        techniques: {}
+      };
+    }
+
+    const techniques = mapping[tacticKey].techniques;
+
+    // --- TECHNIQUE ---
+    const techniqueTitle = row.technique_title;
+    const techniqueName = row.technique_name;
+    const techniqueId = row.technique_id_techniques;
+    const techniqueKey = techniqueTitle || techniqueName || techniqueId || 'UNKNOWN_TECHNIQUE';
+
+    if (!techniquesArr.includes(techniqueTitle)) techniquesArr.push(techniqueTitle);
+    if (!techniques[techniqueKey]) {
+      if (!techniqueIdArr.includes(techniqueId)) techniqueIdArr.push(techniqueId);
+      techniques[techniqueKey] = {
+        id: techniqueId,
+        title: techniqueTitle || techniqueName,
+        description: row.technique_description,
+        subtechniques: {}
+      };
+    }
+
+    const subtechniques = techniques[techniqueKey].subtechniques;
+
+    // --- SUBTECHNIQUE ---
+    const subId = row.subtechnique_id_sub_technique || row.id_sub_technique;
+    const subTitle = row.subtechnique_title;
+    const subDesc = row.subtechnique_description;
+    const subTechniquesId = row.subtechnique_techniques_id || row.techniques_id;
+
+    if (subId) {
+      if (!subtechniques[subId]) {
+        subtechniques[subId] = {
+          id_sub_technique: `${subTechniquesId}.${subId}`,
+          title: subTitle,
+          description: subDesc
+        };
+      } else {
+        const existing = subtechniques[subId];
+        if (!existing.title && subTitle) existing.title = subTitle;
+        if (!existing.description && subDesc) existing.description = subDesc;
+      }
+    } else if (subTitle) {
+      const autoKey = `sub_${Object.keys(subtechniques).length + 1}`;
+      subtechniques[autoKey] = {
+        id_sub_technique: `${subTechniquesId}`,
+        title: subTitle,
+        description: subDesc
+      };
+    }
+  }
+
+  // --- Konversi subtechniques jadi list ---
+  for (const rule of Object.values(result)) {
+    for (const tactic of Object.values(rule.mapping)) {
+      for (const tech of Object.values(tactic.techniques)) {
+        const subDict = tech.subtechniques;
+        tech.subtechniques = Object.values(subDict);
+      }
+    }
+  }
+
+  return { result, rulesArr, tacticsArr, tacticIdArr, techniquesArr, techniqueIdArr };
+}
+
+
+app.post("/get_ttp/:msa_number", async (req, res) => {
+  const { msa_number } = req.params;
+  const { list_rule_name } = req.body;
+  try {
+    const data = await get_ttp(list_rule_name, msa_number);
+    const mapped = mapTTPData(data);
+    return res.status(200).json(mapped);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 async function save_tactics() {
   const data = await tactics()
@@ -220,5 +401,5 @@ async function save_tactics_techniques_subtechniques() {
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
   console.log('=============================')
-  save_tactics_techniques_subtechniques()
+  // save_tactics_techniques_subtechniques()
 });
